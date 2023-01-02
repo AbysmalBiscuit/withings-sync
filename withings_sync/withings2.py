@@ -1,214 +1,256 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import logging
+from pathlib import Path
+from typing import Union
+
 import requests
 import json
 import pkg_resources
 import os
 import sys
-
+from os import PathLike
 from datetime import datetime
 
-log = logging.getLogger('withings')
+from .get_logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class WithingsException(Exception):
     pass
 
 
-class Withings():
-    HOME = os.environ.get('HOME', '.')
+class WithingsConfig:
+    HOME = Path.home()
     AUTHORIZE_URL = 'https://account.withings.com/oauth2_user/authorize2'
     TOKEN_URL = 'https://wbsapi.withings.net/v2/oauth2'
     GETMEAS_URL = 'https://wbsapi.withings.net/measure?action=getmeas'
 
-    APP_CONFIG = os.environ.get('WITHINGS_APP',
-                                pkg_resources.resource_filename(
-                                    __name__,
-                                    'config/withings_app.json'))
-    USER_CONFIG = os.environ.get('WITHINGS_USER',
-                                 HOME + '/.withings_user.json')
+    _config: dict[str, str] = {}
+    _config_file: Path = HOME.joinpath('.config/withings-sync/config.json')
 
+    def __init__(self, config_file: PathLike = None):
+        if config_file is not None:
+            self.__class__.config_file = Path(config_file)
 
-class WithingsConfig(Withings):
-    config = {}
-    config_file = ''
+        if not self.config_file.parent.is_dir():
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def __init__(self, config_file):
-        self.config_file = config_file
-        self.read()
+        if not self.config_file.is_file():
+            self.config = {
+                "callback_url": "https://jaroslawhartman.github.io/withings-sync/contrib/withings.html",
+                "client_id": "183e03e1f363110b3551f96765c98c10e8f1aa647a37067a1cb64bbbaf491626",
+                "consumer_secret": "a75d655c985d9e6391df1514c16719ef7bd69fa7c5d3fd0eac2e2b0ed48f1765",
+                "access_token": "",
+                "authentification_code": "",
+                "refresh_token": "",
+                "userid": "",
+                "last_update_garmin": None,
+                "last_update_trainerroad": None
+            }
+            self.save()
+        else:
+            self.load()
 
-    def read(self):
+    @property
+    def config_file(self):
+        return self.__class__._config_file
+
+    @config_file.setter
+    def config_file(self, value: Path):
+        assert isinstance(value, Path)
+        self.__class__.config_file = value
+
+    @property
+    def config(self):
+        return self.__class__._config
+
+    @config.setter
+    def config(self, value: dict):
+        assert isinstance(value, dict)
+        self.__class__._config = value
+
+    def __contains__(self, item):
+        return item in self.__class__._config
+
+    def __getitem__(self, item):
+        return self.__class__._config[item]
+
+    def __setitem__(self, key, value):
+        self.__class__._config[key] = value
+
+    def __str__(self):
+        return str(self.config)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(config_file={self.config_file})"
+
+    def get(self, item, default=None):
+        if item in self.__class__._config:
+            return self.__class__._config[item]
+        else:
+            return default
+
+    def load(self, config_file: PathLike = None):
+        config_file = config_file or self.config_file
         try:
-            with open(self.config_file) as f:
+            with open(config_file, "r") as f:
                 self.config = json.load(f)
         except (ValueError, FileNotFoundError):
-            log.error('Can\'t read config file ' + self.config_file)
+            logger.error(f"Can't load config file {config_file}")
             self.config = {}
 
-    def write(self):
-        with open(self.config_file, 'w') as f:
-            json.dump(self.config, f, indent=4, sort_keys=True)
+    def save(self):
+        with open(self.config_file, "w") as f:
+            json.dump(self.config, f, indent=2, sort_keys=True)
 
 
-class WithingsOAuth2(Withings):
-    app_config = user_config = None
+class WithingsOAuth2:
+    def __init__(self, config: WithingsConfig):
+        self.config = config
 
-    def __init__(self):
-        app_cfg = WithingsConfig(Withings.APP_CONFIG)
-        self.app_config = app_cfg.config
+        if len(self.config.get('access_token')) == 0:
+            if len(self.config.get('authentification_code')):
+                self.config['authentification_code'] = self.get_authentication_code()
 
-        user_cfg = WithingsConfig(Withings.USER_CONFIG)
-        self.user_config = user_cfg.config
+            self.get_access_token()
 
-        if not self.user_config.get('access_token'):
-            if not self.user_config.get('authentification_code'):
-                self.user_config['authentification_code'] = self.getAuthenticationCode()
+        self.refresh_access_token()
 
-            self.getAccessToken()
-
-        self.refreshAccessToken()
-
-        user_cfg.write()
-
-    def getAuthenticationCode(self):
+    def get_authentication_code(self):
         params = {
             'response_type': 'code',
-            'client_id': self.app_config['client_id'],
+            'client_id': self.config['client_id'],
             'state': 'OK',
             'scope': 'user.metrics',
-            'redirect_uri': self.app_config['callback_url'],
+            'redirect_uri': self.config['callback_url'],
         }
 
-        log.warn('User interaction needed to get Authentification '
+        logger.warning('User interaction needed to get Authentification '
                  'Code from Withings!')
-        log.warn('')
-        log.warn('Open the following URL in your web browser and copy back '
+        logger.warning('')
+        logger.warning('Open the following URL in your web browser and copy back '
                  'the token. You will have *30 seconds* before the '
                  'token expires. HURRY UP!')
-        log.warn('(This is one-time activity)')
-        log.warn('')
+        logger.warning('(This is one-time activity)')
+        logger.warning('')
 
-        url = Withings.AUTHORIZE_URL + '?'
+        url = WithingsConfig.AUTHORIZE_URL + '?'
 
         for key, value in params.items():
             url = url + key + '=' + value + '&'
 
-        log.info(url)
-        log.info('')
+        logger.info(url)
+        logger.info('')
 
         authentification_code = input('Token : ')
 
         return authentification_code
 
-    def getAccessToken(self):
-        log.info('Get Access Token')
+    def _update_access_token(self, params: dict[str, str]):
+        req = requests.post(WithingsConfig.TOKEN_URL, params)
+        resp = req.json()
+
+        status = resp.get('status')
+        body = resp.get('body')
+
+        if status != 0:
+            error_message = f"Received error code: {status}\n"
+            error_message += "Check here for an interpretation of this error: "
+            error_message += "http://developer.withings.com/api-reference#section/Response-status\n"
+            error_message += "If it's regarding an invalid code, try to start the script again to obtain a new link."
+
+            logger.error(error_message)
+
+        self.config['access_token'] = body.get('access_token')
+        self.config['refresh_token'] = body.get('refresh_token')
+        self.config['userid'] = str(body.get('userid'))
+
+    def get_access_token(self):
+        logger.info('Get Access Token')
 
         params = {
             'action': 'requesttoken',
             'grant_type': 'authorization_code',
-            'client_id': self.app_config['client_id'],
-            'client_secret': self.app_config['consumer_secret'],
-            'code': self.user_config['authentification_code'],
-            'redirect_uri': self.app_config['callback_url'],
+            'client_id': self.config['client_id'],
+            'client_secret': self.config['consumer_secret'],
+            'code': self.config['authentification_code'],
+            'redirect_uri': self.config['callback_url'],
         }
 
-        req = requests.post(Withings.TOKEN_URL, params)
-        resp = req.json()
+        self._update_access_token(params)
 
-        status = resp.get('status')
-        body = resp.get('body')
-
-        if status != 0:
-            log.error('Received error code: %d', status)
-            log.error('Check here for an interpretation of this error: '
-                      'http://developer.withings.com/api-reference#section/Response-status')
-            log.error('')
-            log.error('If it\'s regarding an invalid code, try to start the'
-                      ' script again to obtain a new link.')
-
-        self.user_config['access_token'] = body.get('access_token')
-        self.user_config['refresh_token'] = body.get('refresh_token')
-        self.user_config['userid'] = body.get('userid')
-
-    def refreshAccessToken(self):
-        log.info('Refresh Access Token')
+    def refresh_access_token(self):
+        logger.info('Refresh Access Token')
 
         params = {
             'action': 'requesttoken',
             'grant_type': 'refresh_token',
-            'client_id': self.app_config['client_id'],
-            'client_secret': self.app_config['consumer_secret'],
-            'refresh_token': self.user_config['refresh_token'],
+            'client_id': self.config['client_id'],
+            'client_secret': self.config['consumer_secret'],
+            'refresh_token': self.config['refresh_token'],
         }
 
-        req = requests.post(Withings.TOKEN_URL, params)
-        resp = req.json()
-
-        status = resp.get('status')
-        body = resp.get('body')
-
-        if status != 0:
-            log.error('Received error code: %d', status)
-            log.error('Check here for an interpretation of this error: '
-                      'http://developer.withings.com/api-reference#section/Response-status')
-            log.error('')
-            log.error('If it\'s regarding an invalid code, try to start the'
-                      ' script again to obtain a new link.')
-
-        self.user_config['access_token'] = body.get('access_token')
-        self.user_config['refresh_token'] = body.get('refresh_token')
-        self.user_config['userid'] = body.get('userid')
+        self._update_access_token(params)
 
 
-class WithingsAccount(Withings):
-    def __init__(self):
-        self.withings = WithingsOAuth2()
+class WithingsAccount:
+    def __init__(self, withings_config: WithingsConfig):
+        self.height_group = None
+        self.height = None
+        self.height_timestamp = None
 
-    def getMeasurements(self, startdate, enddate):
-        log.info('Get Measurements')
+        self.config = withings_config
+        self.oauth = WithingsOAuth2(withings_config)
+        self.config.save()
+
+    def get_measurements(self, start_date, end_date):
+        logger.info('Get Measurements')
 
         params = {
-            'access_token': self.withings.user_config['access_token'],
+            'access_token': self.config['access_token'],
             # 'meastype': Withings.MEASTYPE_WEIGHT,
             'category': 1,
-            'startdate': startdate,
-            'enddate': enddate,
+            'startdate': start_date,
+            'enddate': end_date,
         }
 
-        req = requests.post(Withings.GETMEAS_URL, params)
+        req = requests.post(WithingsConfig.GETMEAS_URL, params)
 
         measurements = req.json()
 
         if measurements.get('status') == 0:
-            log.debug('Measurements received')
+            logger.debug('Measurements received')
 
             return [WithingsMeasureGroup(g) for
                     g in measurements.get('body').get('measuregrps')]
 
-    def getHeight(self):
+    def get_height(self):
         self.height = None
         self.height_timestamp = None
         self.height_group = None
 
-        log.debug('Get Height')
+        logger.debug('Get Height')
 
         params = {
-            'access_token' : self.withings.user_config['access_token'],
-            'meastype' : WithingsMeasure.TYPE_HEIGHT,
-            'category' : 1,
+            'access_token': self.oauth.config['access_token'],
+            'meastype': WithingsMeasure.TYPE_HEIGHT,
+            'category': 1,
         }
 
-        req = requests.post(Withings.GETMEAS_URL, params)
+        req = requests.post(WithingsConfig.GETMEAS_URL, params)
 
         measurements = req.json()
 
         if measurements.get('status') == 0:
-            log.debug('Height received')
+            logger.debug('Height received')
 
             # there could be multiple height records. use the latest one
             for record in measurements.get('body').get('measuregrps'):
                 self.height_group = WithingsMeasureGroup(record)
-                if self.height != None:
-                    if self.height_timestamp != None:
+                if self.height is not None:
+                    if self.height_timestamp is not None:
                         if self.height_group.get_datetime() > self.height_timestamp:
                             self.height = self.height_group.get_height()
                 else:
@@ -218,7 +260,7 @@ class WithingsAccount(Withings):
         return self.height
 
 
-class WithingsMeasureGroup(object):
+class WithingsMeasureGroup:
     def __init__(self, measuregrp):
         self._raw_data = measuregrp
         self.id = measuregrp.get('grpid')

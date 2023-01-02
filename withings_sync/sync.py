@@ -1,22 +1,30 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import argparse
-import time
-import sys
-import os
 import logging
+import os
+import sys
+import time
+from datetime import date, datetime, timedelta
 
-from datetime import date, datetime
+import verboselogs
+import coloredlogs
 
-from withings_sync.withings2 import WithingsAccount
+from withings_sync.fit import FitEncoder_Weight
 from withings_sync.garmin import GarminConnect
 from withings_sync.trainerroad import TrainerRoad
-from withings_sync.fit import FitEncoder_Weight
+from withings_sync.withings2 import WithingsConfig, WithingsAccount, WithingsConfig
+from withings_sync.get_logger import get_logger
 
 
-def get_args():
+logger = get_logger(__name__)
+
+
+def parse_args(args: list[str] = None):
     parser = argparse.ArgumentParser(
-        description=('A tool for synchronisation of Withings '
-                     '(ex. Nokia Health Body) to Garmin Connect'
-                     ' and Trainer Road.')
+            description=('A tool for synchronisation of Withings '
+                         '(ex. Nokia Health Body) to Garmin Connect'
+                         ' and Trainer Road.')
     )
 
     def date_parser(s):
@@ -44,53 +52,77 @@ def get_args():
                         metavar='TRAINERROAD_PASSWORD',
                         help='username to login TrainerRoad.')
 
-    parser.add_argument('--fromdate', '-f',
+    parser.add_argument("--force-login", "-fl", action="store_true",
+                        help="Force login instead of using cached sessions.")
+
+    parser.add_argument('--from_date', '-f',
                         type=date_parser,
-                        default=date.today(),
+                        default=None,
                         metavar='DATE')
-    parser.add_argument('--todate', '-t',
+
+    parser.add_argument('--to_date', '-t',
                         type=date_parser,
-                        default=date.today(),
+                        default=datetime.fromisoformat(date.today().isoformat()),
                         metavar='DATE')
 
     parser.add_argument('--no-upload',
                         action='store_true',
                         help=('Won\'t upload to Garmin Connect and '
                               'output binary-strings to stdout.'))
-    parser.add_argument('--verbose', '-v',
-                        action='store_true',
-                        help='Run verbosely')
+    mutually_exclusive = parser.add_mutually_exclusive_group()
+    mutually_exclusive.add_argument('--verbose', '-v',
+                                    action='store_true',
+                                    help='Run verbosely')
+    mutually_exclusive.add_argument("--debug", "-d",
+                                    action="store_true",
+                                    help="Use DEBUG level logger.")
 
-    return parser.parse_args()
-
-
-def sync(garmin_username, garmin_password,
-         trainerroad_username, trainerroad_password,
-         fromdate, todate,
-         no_upload, verbose):
+    return parser.parse_args(args)
 
 
-    logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO,
-                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                        stream=sys.stdout)
+def main():
+    args = parse_args()
+
+    # if args.garmin_password is None or args.garmin_password == "":
+    #     args.garmin_password = getpass(prompt="Garmin Password: ")
+
+    logging_level = logging.INFO
+    if args.verbose:
+        logging_level = verboselogs.VERBOSE
+    elif args.debug:
+        logging_level = logging.DEBUG
+
+    coloredlogs.set_level(logging_level)
+
+    config = WithingsConfig()
 
     # Withings API
-    withings = WithingsAccount()
+    withings = WithingsAccount(config)
 
-    startdate = int(time.mktime(fromdate.timetuple()))
-    enddate = int(time.mktime(todate.timetuple())) + 86399
+    # Configure date range for update
+    if args.from_date is None:
+        if config["last_update_garmin"] is not None:
+            start_date = config["last_update_garmin"] + 1
+        else:
+            start_date = int(datetime.fromisoformat(date.today().isoformat()).timestamp())
+    else:
+        start_date = int(args.from_date.timestamp())
 
-    height = withings.getHeight()
+    end_date = int(args.to_date.timestamp()) + 86399
 
-    groups = withings.getMeasurements(startdate=startdate, enddate=enddate)
+    logger.verbose(f"Updating from: {date.fromtimestamp(start_date)} to {date.fromtimestamp(end_date)}")
+
+    height = withings.get_height()
+
+    groups = withings.get_measurements(start_date=start_date, end_date=end_date)
 
     # Only upload if there are measurement returned
     if groups is None or len(groups) == 0:
-        logging.error('No measurements to upload for date or period specified')
+        logger.error('No measurements to upload for date or period specified')
         return -1
 
     # Create FIT file
-    logging.debug('Generating fit file...')
+    logger.debug('Generating fit file...')
     fit = FitEncoder_Weight()
     fit.write_file_info()
     fit.write_file_creator()
@@ -102,17 +134,17 @@ def sync(garmin_username, garmin_password,
         # Get extra physical measurements
         dt = group.get_datetime()
         weight = group.get_weight()
-        fat_ratio = group.get_fat_ratio()
+        percent_fat = group.get_fat_ratio()
         muscle_mass = group.get_muscle_mass()
         hydration = group.get_hydration()
         bone_mass = group.get_bone_mass()
         raw_data = group.get_raw_data()
 
         if weight is None:
-            logging.info('This Withings metric contains no weight data.  Not syncing...')
-            logging.debug('Detected data: ')
-            for dataentry in raw_data:
-                logging.debug(dataentry)
+            logger.info('This Withings metric contains no weight data.  Not syncing...')
+            logger.debug('Detected data: ')
+            for data_entry in raw_data:
+                logger.debug(data_entry)
             continue
 
         if height and weight:
@@ -128,21 +160,13 @@ def sync(garmin_username, garmin_password,
         fit.write_device_info(timestamp=dt)
         fit.write_weight_scale(timestamp=dt,
                                weight=weight,
-                               percent_fat=fat_ratio,
+                               percent_fat=percent_fat,
                                percent_hydration=percent_hydration,
                                bone_mass=bone_mass,
                                muscle_mass=muscle_mass,
                                bmi=bmi)
-
-        logging.debug('Record: %s weight=%s kg, '
-                      'fat_ratio=%s %%, '
-                      'muscle_mass=%s kg, '
-                      'hydration=%s %%, '
-                      'bone_mass=%s kg, '
-                      'bmi=%s',
-                      dt, weight, fat_ratio,
-                      muscle_mass, hydration,
-                      bone_mass, bmi)
+        logger.debug(f"Record: {dt} weight={weight}kg, percent_fat={percent_fat}%, muscle_mass={muscle_mass}kg, hydration="
+                     f"{hydration}%, boned_mass={bone_mass}kg, bmi={bmi}")
 
         if last_dt is None or dt > last_dt:
             last_dt = dt
@@ -151,46 +175,47 @@ def sync(garmin_username, garmin_password,
     fit.finish()
 
     if last_weight is None:
-        logging.error('Invalid weight')
+        logger.error('Invalid weight')
         return -1
 
-    if no_upload:
+    if args.no_upload:
         sys.stdout.buffer.write(fit.getvalue())
         return 0
 
     # Upload to Trainer Road
-    if trainerroad_username:
-        logging.info('Trainerroad username set -- attempting to sync')
-        logging.info(' Last weight {}'.format(last_weight))
-        logging.info(' Measured {}'.format(last_dt))
+    if args.trainerroad_username:
+        logger.info('Trainerroad username set -- attempting to sync')
+        logger.info(' Last weight {}'.format(last_weight))
+        logger.info(' Measured {}'.format(last_dt))
 
-        tr = TrainerRoad(trainerroad_username, trainerroad_password)
+        tr = TrainerRoad(args.trainerroad_username, args.trainerroad_password)
         tr.connect()
 
-        logging.info(f'Current TrainerRoad weight: {tr.weight} kg ')
-        logging.info(f'Updating TrainerRoad weight to {last_weight} kg')
+        logger.info(f'Current TrainerRoad weight: {tr.weight} kg ')
+        logger.info(f'Updating TrainerRoad weight to {last_weight} kg')
 
         tr.weight = round(last_weight, 1)
         tr.disconnect()
 
-        logging.info('TrainerRoad update done!')
+        logger.info('TrainerRoad update done!')
     else:
-        logging.info('No Trainerroad username or a new measurement '
+        logger.info('No Trainerroad username or a new measurement '
                      '- skipping sync')
 
     # Upload to Garmin Connect
-    if garmin_username:
+    if args.garmin_username:
         garmin = GarminConnect()
-        session = garmin.login(garmin_username, garmin_password)
-        logging.debug('attempting to upload fit file...')
+        session = garmin.login(args.garmin_username, args.garmin_password, args.force_login)
+        logger.debug('attempting to upload fit file...')
         r = garmin.upload_file(fit.getvalue(), session)
         if r:
-            logging.info('Fit file uploaded to Garmin Connect')
+            logger.info('Fit file uploaded to Garmin Connect')
+        config["last_update_garmin"] = end_date
     else:
-        logging.info('No Garmin username - skipping sync')
+        logger.info('No Garmin username - skipping sync')
+
+    config.save()
 
 
-def main():
-    args = get_args()
-
-    sync(**vars(args))
+if __name__ == "__main__":
+    main()

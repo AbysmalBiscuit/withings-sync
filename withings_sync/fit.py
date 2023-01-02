@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 from io import BytesIO
 from struct import pack
 from struct import unpack

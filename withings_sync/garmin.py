@@ -1,14 +1,22 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 from datetime import timedelta
 import urllib.request
 import urllib.error
 import urllib.parse
+from getpass import getpass
+
 import cloudscraper
 import re
 import sys
 import json
 import logging
+import requests
+from pathlib import Path
 
-log = logging.getLogger('garmin')
+from .get_logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class LoginSucceeded(Exception):
@@ -23,9 +31,16 @@ class APIException(Exception):
     pass
 
 
-class GarminConnect(object):
+class GarminConnect:
+    HOME = Path.home()
+    CONFIG_DIR = HOME.joinpath(".config/withings-sync")
     LOGIN_URL = 'https://connect.garmin.com/signin'
     UPLOAD_URL = 'https://connect.garmin.com/modern/proxy/upload-service/upload/.fit'
+
+    def __init__(self):
+        self.__class__.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        self.cookies_file = self.__class__.CONFIG_DIR.joinpath("garmin_cookies.json")
+        self.headers_file = self.__class__.CONFIG_DIR.joinpath("garmin_headers.txt")
 
     def create_opener(self, cookie):
         this = self
@@ -147,26 +162,44 @@ class GarminConnect(object):
         return session
 
     def print_cookies(self, cookies):
-        log.debug('Cookies: ')
+        logger.debug('Cookies: ')
         for key, value in list(cookies.items()):
-            log.debug(' %s = %s', key, value)
+            logger.debug(' %s = %s', key, value)
 
-    def login(self, username, password):
+    def login(self, username, password, force_login: bool = False):
 
-        session = self._get_session(email=username, password=password)
+        if force_login or not (self.headers_file.is_file() and self.cookies_file):
+            if password is None:
+                password = getpass(prompt="Garmin Password: ")
+
+            session = self._get_session(email=username, password=password)
+
+            with open(self.headers_file, "w") as f:
+                json.dump(session.headers, f)
+
+            with open(self.cookies_file, "w") as f:
+                json.dump(session.cookies.get_dict(), f)
+        else:
+            session = cloudscraper.CloudScraper()
+
+            with open(self.headers_file, "r") as f:
+                session.headers.update(json.load(f))
+
+            with open(self.cookies_file, "r") as f:
+                session.cookies.update(json.load(f))
 
         try:
-            dashboard = session.get('http://connect.garmin.com/modern')
+            dashboard = session.get('https://connect.garmin.com/modern')
 
             userdata_json_str = re.search(r'VIEWER_SOCIAL_PROFILE\s*=\s*JSON\.parse\((.+)\);$', dashboard.text, re.MULTILINE).group(1)
             userdata = json.loads(json.loads(userdata_json_str))
             username = userdata['displayName']
 
-            log.info('Garmin Connect User Name: %s', username)
+            logger.info('Garmin Connect User Name: %s', username)
 
         except Exception as e:
-            log.error(e)
-            log.error('Unable to retrieve Garmin username! Most likely: '
+            logger.error(e)
+            logger.error('Unable to retrieve Garmin username! Most likely: '
                       'incorrect Garmin login or password!')
 
         return session
@@ -189,8 +222,8 @@ class GarminConnect(object):
                 raise KeyError
         except (ValueError, KeyError):
             if res.status_code == 204:   # HTTP result 204 - 'no content'
-                log.error('No data to upload, try to use --fromdate and --todate')
+                logger.error('No data to upload, try to use --from_date and --to_date')
             else:
-                log.error('Bad response during GC upload: %s', res.status_code)
+                logger.error(f'Bad response during GC upload: {res.status_code}')
 
         return res.status_code in [200, 201, 204]
