@@ -69,6 +69,11 @@ def parse_args(args: list[str] = None):
                         action='store_true',
                         help=('Won\'t upload to Garmin Connect and '
                               'output binary-strings to stdout.'))
+    
+    parser.add_argument("--reset-config", action="store_true",
+                        help="Resets the config file allowing the user to authorize the app again.")
+
+    # Verbosity Options
     mutually_exclusive = parser.add_mutually_exclusive_group()
     mutually_exclusive.add_argument('--verbose', '-v',
                                     action='store_true',
@@ -80,8 +85,8 @@ def parse_args(args: list[str] = None):
     return parser.parse_args(args)
 
 
-def main():
-    args = parse_args()
+def main(args: list[str] = None):
+    args = parse_args(args)
 
     # if args.garmin_password is None or args.garmin_password == "":
     #     args.garmin_password = getpass(prompt="Garmin Password: ")
@@ -95,6 +100,12 @@ def main():
     coloredlogs.set_level(logging_level)
 
     config = WithingsConfig()
+
+    if args.reset_config:
+        config.reset()
+        logger.info("Succesfully reset the config. Next time you run withings-sync you will be prompted to "
+                    "re-authorize the app.")
+        exit(0)
 
     # Withings API
     withings = WithingsAccount(config)
