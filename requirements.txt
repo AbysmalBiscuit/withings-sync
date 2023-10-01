@@ -1,6 +1,8 @@
-setuptools~=65.5.0
-cloudscraper~=1.2.65
-requests~=2.27.1
-coloredlogs~=15.0.1
-verboselogs~=1.7
-lxml~=4.9.1
+setuptools
+cloudscraper
+requests
+coloredlogs
+verboselogs
+lxml
+garth
+argcomplete
