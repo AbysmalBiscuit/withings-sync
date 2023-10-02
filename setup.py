@@ -28,9 +28,11 @@ setup(
         'License :: OSI Approved :: MIT License',
     ],
     install_requires=[
-        'lxml',
-        'requests',
         'cloudscraper',
+        'requests',
+        'coloredlogs',
+        'verboselogs',
+        'lxml',
         'garth',
         'argcomplete'
     ],
