@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-from io import BytesIO
-from struct import pack
-from struct import unpack
-from datetime import datetime
+
 import time
+from datetime import datetime
+from io import BytesIO
+from struct import pack, unpack
+from typing import ClassVar
 
 
 def _calcCRC(crc, byte):
@@ -37,8 +38,8 @@ def _calcCRC(crc, byte):
     return crc
 
 
-class FitBaseType(object):
-    """BaseType Definition
+class FitBaseType:
+    """BaseType Definition.
 
     see FIT Protocol Document(Page.20)"""
 
@@ -184,11 +185,11 @@ class FitBaseType(object):
         return pack(fmt, value)
 
 
-class Fit(object):
-    HEADER_SIZE = 12
+class Fit:
+    HEADER_SIZE: int = 12
 
     # not sure if this is the mesg_num
-    GMSG_NUMS = {
+    GMSG_NUMS: ClassVar[dict[str, int]] = {
         "file_id": 0,
         "device_info": 23,
         "weight_scale": 30,
@@ -198,36 +199,37 @@ class Fit(object):
 
 
 class FitEncoder(Fit):
-    FILE_TYPE = 9
-    LMSG_TYPE_FILE_INFO = 0
-    LMSG_TYPE_FILE_CREATOR = 1
-    LMSG_TYPE_DEVICE_INFO = 2
+    FILE_TYPE: int = 9
+    LMSG_TYPE_FILE_INFO: int = 0
+    LMSG_TYPE_FILE_CREATOR: int = 1
+    LMSG_TYPE_DEVICE_INFO: int = 2
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.buf = BytesIO()
         self.write_header()  # create header first
         self.device_info_defined = False
 
-    def __str__(self):
-        orig_pos = self.buf.tell()
+    def __str__(self) -> str:
+        orig_pos: int = self.buf.tell()
         self.buf.seek(0)
-        lines = []
+        lines: list[str] = []
         while True:
-            b = self.buf.read(16)
+            b: bytes = self.buf.read(16)
             if not b:
                 break
-            lines.append(" ".join(["%02x" % ord(c) for c in b]))
+            # lines.append(" ".join(["%02x" % ord(c) for c in b]))
+            lines.append(" ".join([f"{c:02x}" for c in b]))
         self.buf.seek(orig_pos)
         return "\n".join(lines)
 
     def write_header(
         self,
-        header_size=Fit.HEADER_SIZE,
-        protocol_version=16,
-        profile_version=108,
-        data_size=0,
-        data_type=b".FIT",
-    ):
+        header_size: int = Fit.HEADER_SIZE,
+        protocol_version: int = 16,
+        profile_version: int = 108,
+        data_size: int = 0,
+        data_type: bytes = b".FIT",
+    ) -> None:
         self.buf.seek(0)
         s = pack(
             "BBHI4s",
@@ -239,7 +241,7 @@ class FitEncoder(Fit):
         )
         self.buf.write(s)
 
-    def _build_content_block(self, content):
+    def _build_content_block(self, content) -> tuple[bytes, bytes]:
         field_defs = []
         values = []
         for num, basetype, value, scale in content:
@@ -260,7 +262,7 @@ class FitEncoder(Fit):
         manufacturer=None,
         product=None,
         number=None,
-    ):
+    ) -> None:
         if time_created is None:
             time_created = datetime.now()
 
@@ -280,18 +282,20 @@ class FitEncoder(Fit):
         fixed_content = pack("BBHB", 0, 0, msg_number, len(content))
 
         self.buf.write(
-            b"".join([
-                # definition
-                self.record_header(definition=True, lmsg_type=self.LMSG_TYPE_FILE_INFO),
-                fixed_content,
-                fields,
-                # record
-                self.record_header(lmsg_type=self.LMSG_TYPE_FILE_INFO),
-                values,
-            ])
+            b"".join(
+                [
+                    # definition
+                    self.record_header(definition=True, lmsg_type=self.LMSG_TYPE_FILE_INFO),
+                    fixed_content,
+                    fields,
+                    # record
+                    self.record_header(lmsg_type=self.LMSG_TYPE_FILE_INFO),
+                    values,
+                ]
+            )
         )
 
-    def write_file_creator(self, software_version=None, hardware_version=None):
+    def write_file_creator(self, software_version=None, hardware_version=None) -> None:
         content = [
             (0, FitBaseType.uint16, software_version, None),
             (1, FitBaseType.uint8, hardware_version, None),
@@ -302,17 +306,17 @@ class FitEncoder(Fit):
         # reserved, architecture(0: little endian)
         fixed_content = pack("BBHB", 0, 0, msg_number, len(content))
         self.buf.write(
-            b"".join([
-                # definition
-                self.record_header(
-                    definition=True, lmsg_type=self.LMSG_TYPE_FILE_CREATOR
-                ),
-                fixed_content,
-                fields,
-                # record
-                self.record_header(lmsg_type=self.LMSG_TYPE_FILE_CREATOR),
-                values,
-            ])
+            b"".join(
+                [
+                    # definition
+                    self.record_header(definition=True, lmsg_type=self.LMSG_TYPE_FILE_CREATOR),
+                    fixed_content,
+                    fields,
+                    # record
+                    self.record_header(lmsg_type=self.LMSG_TYPE_FILE_CREATOR),
+                    values,
+                ]
+            )
         )
 
     def write_device_info(
@@ -328,7 +332,7 @@ class FitEncoder(Fit):
         device_type=None,
         hardware_version=None,
         battery_status=None,
-    ):
+    ) -> None:
         content = [
             (253, FitBaseType.uint32, self.timestamp(timestamp), 1),
             (3, FitBaseType.uint32z, serial_number, 1),
@@ -346,9 +350,7 @@ class FitEncoder(Fit):
         fields, values = self._build_content_block(content)
 
         if not self.device_info_defined:
-            header = self.record_header(
-                definition=True, lmsg_type=self.LMSG_TYPE_DEVICE_INFO
-            )
+            header = self.record_header(definition=True, lmsg_type=self.LMSG_TYPE_DEVICE_INFO)
             msg_number = self.GMSG_NUMS["device_info"]
             # reserved, architecture(0: little endian)
             fixed_content = pack("BBHB", 0, 0, msg_number, len(content))
@@ -358,13 +360,13 @@ class FitEncoder(Fit):
         header = self.record_header(lmsg_type=self.LMSG_TYPE_DEVICE_INFO)
         self.buf.write(header + values)
 
-    def record_header(self, definition=False, lmsg_type=0):
+    def record_header(self, definition=False, lmsg_type=0) -> bytes:
         msg = 0
         if definition:
             msg = 1 << 6  # 6th bit is a definition message
         return pack("B", msg + lmsg_type)
 
-    def crc(self):
+    def crc(self) -> bytes:
         orig_pos = self.buf.tell()
         self.buf.seek(0)
 
@@ -377,8 +379,8 @@ class FitEncoder(Fit):
         self.buf.seek(orig_pos)
         return pack("H", crc)
 
-    def finish(self):
-        """re-weite file-header, then append crc to end of file"""
+    def finish(self) -> None:
+        """Re-write file-header, then append crc to end of file."""
         data_size = self.get_size() - self.HEADER_SIZE
         self.write_header(data_size=data_size)
         crc = self.crc()
@@ -395,9 +397,8 @@ class FitEncoder(Fit):
     def getvalue(self):
         return self.buf.getvalue()
 
-    def timestamp(self, t):
-        """the timestamp in fit protocol is seconds since
-        UTC 00:00 Dec 31 1989 (631065600)"""
+    def timestamp(self, t: float | datetime) -> float:
+        """The timestamp in fit protocol is seconds since UTC 00:00 Dec 31 1989 (631065600)."""
         if isinstance(t, datetime):
             t = time.mktime(t.timetuple())
         return t - 631065600
@@ -405,9 +406,9 @@ class FitEncoder(Fit):
 
 class FitEncoderBloodPressure(FitEncoder):
     # Here might be dragons - no idea what lsmg stand for, found 14 somewhere in the deepest web
-    LMSG_TYPE_BLOOD_PRESSURE = 14
+    LMSG_TYPE_BLOOD_PRESSURE: int = 14
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.blood_pressure_monitor_defined = False
 
@@ -421,7 +422,7 @@ class FitEncoderBloodPressure(FitEncoder):
         map_morning_values=None,
         map_evening_values=None,
         heart_rate=None,
-    ):
+    ) -> None:
         # BLOOD PRESSURE FILE MESSAGES
         content = [
             (253, FitBaseType.uint32, self.timestamp(timestamp), 1),
@@ -436,9 +437,7 @@ class FitEncoderBloodPressure(FitEncoder):
         fields, values = self._build_content_block(content)
 
         if not self.blood_pressure_monitor_defined:
-            header = self.record_header(
-                definition=True, lmsg_type=self.LMSG_TYPE_BLOOD_PRESSURE
-            )
+            header = self.record_header(definition=True, lmsg_type=self.LMSG_TYPE_BLOOD_PRESSURE)
             msg_number = self.GMSG_NUMS["blood_pressure"]
             # reserved, architecture(0: little endian)
             fixed_content = pack("BBHB", 0, 0, msg_number, len(content))
@@ -452,7 +451,7 @@ class FitEncoderBloodPressure(FitEncoder):
 class FitEncoderWeight(FitEncoder):
     LMSG_TYPE_WEIGHT_SCALE = 3
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.weight_scale_defined = False
 
@@ -490,9 +489,7 @@ class FitEncoderWeight(FitEncoder):
         fields, values = self._build_content_block(content)
 
         if not self.weight_scale_defined:
-            header = self.record_header(
-                definition=True, lmsg_type=self.LMSG_TYPE_WEIGHT_SCALE
-            )
+            header = self.record_header(definition=True, lmsg_type=self.LMSG_TYPE_WEIGHT_SCALE)
             msg_number = self.GMSG_NUMS["weight_scale"]
             # reserved, architecture(0: little endian)
             fixed_content = pack("BBHB", 0, 0, msg_number, len(content))

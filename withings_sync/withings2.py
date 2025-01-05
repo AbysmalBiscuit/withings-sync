@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import urllib.parse
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
-from pprint import pprint, pformat
-from typing import Literal, TypeAlias, TypedDict, Union, cast
+from pprint import pformat
+from typing import TYPE_CHECKING, ClassVar, Literal, TypeAlias, TypedDict, cast
 
 import requests
-import json
-import os
-import sys
-import urllib.parse
-from os import PathLike
-from datetime import datetime
-from verboselogs import VerboseLogger
 
 from withings_sync.get_logger import get_logger
+
+if TYPE_CHECKING:
+    from verboselogs import VerboseLogger
 
 logger: VerboseLogger = get_logger(__name__)
 
 
-class WithingsException(Exception):
+class WithingsError(Exception):
     pass
 
 
@@ -62,7 +61,7 @@ class WithingsConfig:
     _config: ConfigDict = cast(ConfigDict, {})
     _config_file: Path = HOME.joinpath(".config/withings-sync/config.json")
 
-    _config_template: ConfigDict = {
+    _config_template: ClassVar[ConfigDict] = {
         "callback_url": "https://jaroslawhartman.github.io/withings-sync/contrib/withings.html",
         "client_id": "183e03e1f363110b3551f96765c98c10e8f1aa647a37067a1cb64bbbaf491626",
         "consumer_secret": "a75d655c985d9e6391df1514c16719ef7bd69fa7c5d3fd0eac2e2b0ed48f1765",
@@ -130,16 +129,15 @@ class WithingsConfig:
     def get(self, item: ConfigKeys, default: str | int | None = None) -> str | int | datetime | None:
         if item in self.__class__._config:
             return self.__class__._config[item]
-        else:
-            return default
+        return default
 
     def load(self, config_file: Path | None = None) -> None:
         config_file = config_file or self.config_file
         try:
-            with open(config_file, "r") as f:
+            with open(config_file) as f:
                 self.config = json.load(f)
         except (ValueError, FileNotFoundError):
-            logger.error(f"Cannot load config file {config_file}")
+            logger.exception(f"Cannot load config file {config_file}")
             self.config = cast(ConfigDict, {})
 
     def save(self) -> None:
@@ -152,7 +150,7 @@ class WithingsConfig:
 
 
 class WithingsOAuth2:
-    def __init__(self, config: WithingsConfig):
+    def __init__(self, config: WithingsConfig) -> None:
         self.config: WithingsConfig = config
 
         if self.config.get("access_token") is None or len(self.config.get("access_token", "")) == 0:

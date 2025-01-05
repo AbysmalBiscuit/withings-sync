@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import requests
+
 import json
 import logging
-
-from lxml import etree
 from io import StringIO
+
+import requests
+from lxml import etree
 
 logger = logging.getLogger(__name__)
 

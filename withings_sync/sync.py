@@ -1,82 +1,78 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json
+
 import argparse
+import json
 import logging
 import os
-import sys
-import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from getpass import getpass
 
-import verboselogs
-import coloredlogs
-
-from withings_sync.fit import FitEncoderWeight, FitEncoderBloodPressure
-from withings_sync.garmin import GarminConnect
-from withings_sync.trainerroad import TrainerRoad
-from withings_sync.withings2 import WithingsConfig, WithingsAccount, WithingsConfig
-
-from withings_sync.get_logger import get_logger
-
 import argcomplete
+import coloredlogs
+import verboselogs
+
+from withings_sync.fit import FitEncoderBloodPressure, FitEncoderWeight
+from withings_sync.garmin import GarminConnect
+from withings_sync.get_logger import get_logger
+from withings_sync.trainerroad import TrainerRoad
+from withings_sync.withings2 import WithingsAccount, WithingsConfig
+
+coloredlogs.install(level=logging.INFO)
+logger: verboselogs.VerboseLogger = get_logger(__name__)
 
 
-logger = get_logger(__name__)
-
-
-def parse_args(args: list[str] = None):
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-            description=('A tool for synchronisation of Withings '
-                         '(ex. Nokia Health Body) to Garmin Connect'
-                         ' and Trainer Road.')
+        description=(
+            "A tool for synchronisation of Withings " "(ex. Nokia Health Body) to Garmin Connect" " and Trainer Road."
+        )
     )
 
-    def date_parser(s):
-        return datetime.strptime(s, '%Y-%m-%d')
+    def date_parser(s: str) -> datetime:
+        return datetime.strptime(s, "%Y-%m-%d")
 
-    parser.add_argument('--garmin-username', '--gu',
-                        default=os.environ.get('GARMIN_USERNAME'),
-                        type=str,
-                        metavar='GARMIN_USERNAME',
-                        help='username to login Garmin Connect.')
-    
+    parser.add_argument(
+        "--garmin-username",
+        "-gu",
+        default=os.environ.get("GARMIN_USERNAME"),
+        type=str,
+        metavar="GARMIN_USERNAME",
+        help="username to login Garmin Connect.",
+    )
+
     # parser.add_argument('--garmin-password', '--gp',
     #                     default=os.environ.get('GARMIN_PASSWORD'),
     #                     type=str,
     #                     metavar='GARMIN_PASSWORD',
     #                     help='password to login Garmin Connect.')
 
-    parser.add_argument('--trainerroad-username', '--tu',
-                        default=os.environ.get('TRAINERROAD_USERNAME'),
-                        type=str,
-                        metavar='TRAINERROAD_USERNAME',
-                        help='username to login TrainerRoad.')
-    
+    parser.add_argument(
+        "--trainerroad-username",
+        "-tu",
+        default=os.environ.get("TRAINERROAD_USERNAME"),
+        type=str,
+        metavar="TRAINERROAD_USERNAME",
+        help="username to login TrainerRoad.",
+    )
+
     # parser.add_argument('--trainerroad-password', '--tp',
     #                     default=os.environ.get('TRAINERROAD_PASSWORD'),
     #                     type=str,
     #                     metavar='TRAINERROAD_PASSWORD',
     #                     help='username to login TrainerRoad.')
 
-    parser.add_argument("--force-login", "-fl", action="store_true",
-                        help="Force login instead of using cached sessions.")
-
-    parser.add_argument('--from_date', '-f',
-                        type=date_parser,
-                        default=None,
-                        metavar='DATE')
-
-    parser.add_argument('--to_date', '-t',
-                        type=date_parser,
-                        default=datetime.fromisoformat(date.today().isoformat()),
-                        metavar='DATE')
-    
     parser.add_argument(
-        "--to-fit", "-F",
-        action="store_true",
-        help="Write output file in FIT format."
+        "--force-login", "-fl", action="store_true", help="Force login instead of using cached sessions."
     )
+
+    parser.add_argument("--from_date", "-f", type=date_parser, default=None, metavar="DATE")
+
+    parser.add_argument(
+        "--to_date", "-t", type=date_parser, default=datetime.fromisoformat(date.today().isoformat()), metavar="DATE"
+    )
+
+    parser.add_argument("--to-fit", "-F", action="store_true", help="Write output file in FIT format.")
 
     parser.add_argument(
         "--to-json",
@@ -93,39 +89,35 @@ def parse_args(args: list[str] = None):
         help="Write downloaded measurements to file.",
     )
 
-    parser.add_argument('--no-upload',
-                        action='store_true',
-                        help=('Won\'t upload to Garmin Connect and '
-                              'output binary-strings to stdout.'))
-    
     parser.add_argument(
-        "--features",
-        nargs='+',
-        default=[],
-        metavar="BLOOD_PRESSURE",
-        help="Enable Features like BLOOD_PRESSURE"
+        "--no-upload",
+        action="store_true",
+        help=("Won't upload to Garmin Connect and " "output binary-strings to stdout."),
     )
-    
-    parser.add_argument("--reset-config", action="store_true",
-                        help="Resets the config file allowing the user to authorize the app again.")
+
+    parser.add_argument(
+        "--features", nargs="+", default=[], metavar="BLOOD_PRESSURE", help="Enable Features like BLOOD_PRESSURE"
+    )
+
+    parser.add_argument(
+        "--reset-config",
+        action="store_true",
+        help="Resets the config file allowing the user to authorize the app again.",
+    )
 
     # Verbosity Options
     mutually_exclusive = parser.add_mutually_exclusive_group()
-    mutually_exclusive.add_argument('--verbose', '-v',
-                                    action='store_true',
-                                    help='Run verbosely')
-    mutually_exclusive.add_argument("--debug", "-d",
-                                    action="store_true",
-                                    help="Use DEBUG level logger.")
-    
+    mutually_exclusive.add_argument("--verbose", "-v", action="store_true", help="Run verbosely")
+    mutually_exclusive.add_argument("--debug", "-d", action="store_true", help="Use DEBUG level logger.")
+
     # Enable automated argument completion
     argcomplete.autocomplete(parser)
 
     return parser.parse_args(args)
 
 
-def sync_garmin(fit_file, args):
-    """Sync generated fit file to Garmin Connect"""
+def sync_garmin(fit_file, args) -> bool:
+    """Sync generated fit file to Garmin Connect."""
     garmin = GarminConnect()
     session = garmin.login(args.garmin_username, args.garmin_password)
     return garmin.upload_file(fit_file.getvalue(), session)
@@ -142,7 +134,7 @@ def sync_trainerroad(last_weight, args):
     return t_road.weight
 
 
-def generate_fitdata(sync_data):
+def generate_fitdata(sync_data) -> tuple[FitEncoderWeight | None, FitEncoderBloodPressure | None]:
     """Generate fit data from measured data"""
     logger.debug("Generating fit data...")
 
@@ -196,7 +188,7 @@ def generate_fitdata(sync_data):
 
 
 def generate_json_data(sync_data):
-    """Generate fit data from measured data"""
+    """Generate fit data from measured data."""
     logger.debug("Generating json data...")
 
     json_data = {}
@@ -209,8 +201,7 @@ def generate_json_data(sync_data):
         if "bmi" in record:
             json_data[sdt]["BMI"] = {"Value": record["bmi"], "Unit": "kg/m^2"}
         if "percent_hydration" in record:
-            json_data[sdt]["Percent_Hydration"] = {
-                "Value": record["percent_hydration"], "Unit": "%"}
+            json_data[sdt]["Percent_Hydration"] = {"Value": record["percent_hydration"], "Unit": "%"}
     logger.debug("Json data generated...")
     return json_data
 
@@ -249,27 +240,29 @@ def prepare_sync_data(height, groups, args):
                 bmi = round(weight / pow(height, 2), 1)
             else:
                 bmi = None
-            
+
             if hydration and weight:
                 percent_hydration = round(hydration * 100.0 / weight, 2)
             else:
                 percent_hydration = None
 
-            group_data.update({
-                # "date_time": group.get_datetime(),
-                "height": height,
-                "weight": group.get_weight(),
-                "fat_ratio": group.get_fat_ratio(),
-                "muscle_mass": group.get_muscle_mass(),
-                "hydration": group.get_hydration(),
-                "percent_hydration": percent_hydration,
-                "bone_mass": group.get_bone_mass(),
-                "pulse_wave_velocity": group.get_pulse_wave_velocity(),
-                "heart_pulse": group.get_heart_pulse(),
-                "bmi": bmi,
-                "raw_data": group.get_raw_data(),
-                "type": "weight",
-            })
+            group_data.update(
+                {
+                    # "date_time": group.get_datetime(),
+                    "height": height,
+                    "weight": group.get_weight(),
+                    "fat_ratio": group.get_fat_ratio(),
+                    "muscle_mass": group.get_muscle_mass(),
+                    "hydration": group.get_hydration(),
+                    "percent_hydration": percent_hydration,
+                    "bone_mass": group.get_bone_mass(),
+                    "pulse_wave_velocity": group.get_pulse_wave_velocity(),
+                    "heart_pulse": group.get_heart_pulse(),
+                    "bmi": bmi,
+                    "raw_data": group.get_raw_data(),
+                    "type": "weight",
+                }
+            )
 
             logger.debug(
                 f"{dt} Detected data:\n"
@@ -283,14 +276,16 @@ def prepare_sync_data(height, groups, args):
                 f"bmi={group_data['bmi']}"
             )
         if group.get_diastolic_blood_pressure():
-            group_data.update({
-                # "date_time": group.get_datetime(),
-                "diastolic_blood_pressure": group.get_diastolic_blood_pressure(),
-                "systolic_blood_pressure": group.get_systolic_blood_pressure(),
-                "heart_pulse": group.get_heart_pulse(),
-                "raw_data": group.get_raw_data(),
-                "type": "blood_pressure"
-            })
+            group_data.update(
+                {
+                    # "date_time": group.get_datetime(),
+                    "diastolic_blood_pressure": group.get_diastolic_blood_pressure(),
+                    "systolic_blood_pressure": group.get_systolic_blood_pressure(),
+                    "heart_pulse": group.get_heart_pulse(),
+                    "raw_data": group.get_raw_data(),
+                    "type": "blood_pressure",
+                }
+            )
 
             logger.debug(
                 f"{dt} Detected data:\n"
@@ -310,7 +305,6 @@ def prepare_sync_data(height, groups, args):
             continue
         else:
             sync_dict[dt] = group_data
-
 
         # join groups with same timestamp
         # for k, v in group_data.items():
@@ -347,28 +341,36 @@ def write_to_fit_file(filename, fit_data):
         logger.error(f"Unable to open output fit file! {filename}")
 
 
-def write_to_file_when_needed(fit_data_weight, fit_data_blood_pressure, json_data, args):
+def write_to_file_when_needed(
+    fit_data_weight: FitEncoderWeight | None,
+    fit_data_blood_pressure: FitEncoderBloodPressure | None,
+    json_data: dict,
+    args: argparse.Namespace,
+) -> None:
     """Write measurements to file when requested"""
-    if args.output is not None:
-        if args.to_fit:
-            if fit_data_weight is not None:
-                write_to_fit_file(args.output + ".weight.fit", fit_data_weight)
-            if fit_data_blood_pressure is not None:
-                write_to_fit_file(
-                    args.output + ".blood_pressure.fit", fit_data_blood_pressure)
+    logger.info(fit_data_weight)
+    if args.output is None:
+        return
+    if args.to_fit:
+        if fit_data_weight is not None:
+            write_to_fit_file(args.output + ".weight.fit", fit_data_weight)
+        if fit_data_blood_pressure is not None:
+            write_to_fit_file(args.output + ".blood_pressure.fit", fit_data_blood_pressure)
 
-        if args.to_json:
-            filename = args.output + ".json"
-            logger.info(f"Writing JSON file to {filename}.", )
-            try:
-                with open(filename, "w", encoding="utf-8") as json_file:
-                    json.dump(json_data, json_file, indent=2)
-            except OSError:
-                logger.error(f"Unable to open output JSON file: '{filename}'")
+    if args.to_json:
+        filename: str = args.output + ".json"
+        logger.info(
+            f"Writing JSON file to {filename}.",
+        )
+        try:
+            with open(filename, "w", encoding="utf-8") as json_file:
+                json.dump(json_data, json_file, indent=2)
+        except OSError:
+            logger.error(f"Unable to open output JSON file: '{filename}'")
 
 
-def main(args: list[str] = None):
-    args = parse_args(args)
+def main(args: list[str] | None = None):
+    args: argparse.Namespace = parse_args(args)
 
     # if args.garmin_password is None or args.garmin_password == "":
     #     args.garmin_password = getpass(prompt="Garmin Password: ")
@@ -385,8 +387,10 @@ def main(args: list[str] = None):
 
     if args.reset_config:
         config.reset()
-        logger.info("Succesfully reset the config. Next time you run withings-sync you will be prompted to "
-                    "re-authorize the app.")
+        logger.info(
+            "Succesfully reset the config. Next time you run withings-sync you will be prompted to "
+            "re-authorize the app."
+        )
         exit(0)
 
     # Withings API
@@ -411,9 +415,9 @@ def main(args: list[str] = None):
 
     # Only upload if there are measurement returned
     if groups is None or len(groups) == 0:
-        logger.error('No measurements to upload for date or period specified')
+        logger.error("No measurements to upload for date or period specified")
         return -1
-    
+
     last_measurement_type, last_date_time, syncdata = prepare_sync_data(height, groups, args)
 
     fit_data_weight, fit_data_blood_pressure = generate_fitdata(syncdata)
@@ -437,8 +441,7 @@ def main(args: list[str] = None):
                 logger.info("TrainerRoad update done!")
                 config["last_update_garmin"] = end_date
         else:
-            logger.info(
-                "No TrainerRoad username or a new measurement " "- skipping sync")
+            logger.info("No TrainerRoad username or a new measurement " "- skipping sync")
 
         # Upload to Garmin Connect
         if args.garmin_username and (fit_data_weight is not None or fit_data_blood_pressure is not None):
