@@ -1,0 +1,37 @@
+[build-system]
+requires = [
+  "hatchling",
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "withings-sync"
+version = "4.0.1"
+description = "A tool for synchronisation of Withings (ex. Nokia Health Body) to Garmin Connect and Trainer Road."
+keywords = [
+  "api",
+  "garmin",
+  "scale",
+  "smarthome",
+  "sync",
+  "withings",
+]
+readme = "README.md"
+authors = [
+  { name = "Masayuki Hamasaki, Steffen Vogel", email = "post@steffenvogel.de" },
+]
+
+requires-python = ">=3.12"
+
+dependencies = [
+  'argcomplete',
+  'cloudscraper',
+  'coloredlogs',
+  'garth',
+  'lxml',
+  'requests',
+  'verboselogs',
+]
+
+[project.scripts]
+withings-sync = "withings_sync.sync:main"

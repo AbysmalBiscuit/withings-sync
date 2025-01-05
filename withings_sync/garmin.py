@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+from __future__ import annotations
 from datetime import timedelta
 import urllib.request
 import urllib.error
@@ -32,8 +32,8 @@ class APIException(Exception):
 
 
 class GarminConnect:
-    HOME = Path.home()
-    CONFIG_DIR = HOME.joinpath(".config/withings-sync")
+    HOME: Path = Path.home()
+    CONFIG_DIR: Path = HOME.joinpath(".config/withings-sync")
     UPLOAD_URL = "https://connect.garmin.com/upload-service/upload/.fit"
 
     def __init__(self):
@@ -42,23 +42,29 @@ class GarminConnect:
         self.headers_file = self.__class__.CONFIG_DIR.joinpath("garmin_headers.txt")
 
     @staticmethod
-    def get_session(email=None, password=None):
+    def get_session(email: str | None = None, password: str | None = None):
         session = cloudscraper.CloudScraper()
 
         # self.print_cookies(session.cookies)
         try:
             garth.login(email, password)
         except Exception as ex:
-            raise APIException(f"Authentication failure: {ex}. Did you enter correct credentials?")
+            raise APIException(
+                f"Authentication failure: {ex}. Did you enter correct credentials?"
+            )
 
-        session.headers.update({'NK': 'NT', 'authorization': garth.client.oauth2_token.__str__(), 'di-backend': 'connectapi.garmin.com'})
+        session.headers.update({
+            "NK": "NT",
+            "authorization": garth.client.oauth2_token.__str__(),
+            "di-backend": "connectapi.garmin.com",
+        })
 
         return session
 
     def print_cookies(self, cookies):
-        logger.debug('Cookies: ')
+        logger.debug("Cookies: ")
         for key, value in list(cookies.items()):
-            logger.debug(' %s = %s', key, value)
+            logger.debug(" %s = %s", key, value)
 
     @staticmethod
     def login(username, password):
@@ -66,20 +72,18 @@ class GarminConnect:
         return GarminConnect.get_session(email=username, password=password)
 
     def upload_file(self, f, session):
-        files = {
-            'data': ('withings.fit', f)
-        }
+        files = {"data": ("withings.fit", f)}
 
-        res = session.post(self.UPLOAD_URL, files=files, headers={'nk': 'NT'})
+        res = session.post(self.UPLOAD_URL, files=files, headers={"nk": "NT"})
 
         try:
             resp = res.json()
-            if 'detailedImportResult' not in resp:
+            if "detailedImportResult" not in resp:
                 raise KeyError
         except (ValueError, KeyError):
-            if res.status_code == 204:   # HTTP result 204 - 'no content'
-                logger.error('No data to upload, try to use --from_date and --to_date')
+            if res.status_code == 204:  # HTTP result 204 - 'no content'
+                logger.error("No data to upload, try to use --from_date and --to_date")
             else:
-                logger.error(f'Bad response during GC upload: {res.status_code}')
+                logger.error(f"Bad response during GC upload: {res.status_code}")
 
         return res.status_code in [200, 201, 204]

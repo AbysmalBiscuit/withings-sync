@@ -1,8 +1,0 @@
-setuptools
-cloudscraper
-requests
-coloredlogs
-verboselogs
-lxml
-garth
-argcomplete

@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on 2020-05-06 20:49
+"""Created on 2020-05-06 20:49.
 
 @author: Lev Velykoivanenko (velykoivanenko.lev@gmail.com)
 """
+
+from __future__ import annotations
+
 __all__ = ["get_logger"]
 __license__ = "GPLv3"
 

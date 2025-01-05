@@ -1,38 +1,68 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-import logging
+from __future__ import annotations
+
 from copy import deepcopy
 from pathlib import Path
 from pprint import pprint, pformat
-from typing import Union
+from typing import Literal, TypeAlias, TypedDict, Union, cast
 
 import requests
 import json
-import pkg_resources
 import os
 import sys
+import urllib.parse
 from os import PathLike
 from datetime import datetime
+from verboselogs import VerboseLogger
 
-from .get_logger import get_logger
+from withings_sync.get_logger import get_logger
 
-logger = get_logger(__name__)
+logger: VerboseLogger = get_logger(__name__)
 
 
 class WithingsException(Exception):
     pass
 
 
+class ConfigDict(TypedDict):
+    callback_url: str
+    client_id: str
+    consumer_secret: str
+    access_token: str
+    authentification_code: str
+    refresh_token: str
+    userid: str
+    last_update_garmin: int | None
+    last_update_trainerroad: int | None
+
+
+class PartialConfigDict(ConfigDict, total=False):
+    pass
+
+
+ConfigKeys: TypeAlias = Literal[
+    "callback_url",
+    "client_id",
+    "consumer_secret",
+    "access_token",
+    "authentification_code",
+    "refresh_token",
+    "userid",
+    "last_update_garmin",
+    "last_update_trainerroad",
+]
+
+
 class WithingsConfig:
-    HOME = Path.home()
+    HOME: Path = Path.home()
     AUTHORIZE_URL = "https://account.withings.com/oauth2_user/authorize2"
     TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2"
     GETMEAS_URL = "https://wbsapi.withings.net/measure?action=getmeas"
 
-    _config: dict[str, str] = {}
+    _config: ConfigDict = cast(ConfigDict, {})
     _config_file: Path = HOME.joinpath(".config/withings-sync/config.json")
 
-    _config_template: dict = {
+    _config_template: ConfigDict = {
         "callback_url": "https://jaroslawhartman.github.io/withings-sync/contrib/withings.html",
         "client_id": "183e03e1f363110b3551f96765c98c10e8f1aa647a37067a1cb64bbbaf491626",
         "consumer_secret": "a75d655c985d9e6391df1514c16719ef7bd69fa7c5d3fd0eac2e2b0ed48f1765",
@@ -41,10 +71,10 @@ class WithingsConfig:
         "refresh_token": "",
         "userid": "",
         "last_update_garmin": None,
-        "last_update_trainerroad": None
+        "last_update_trainerroad": None,
     }
 
-    def __init__(self, config_file: PathLike = None):
+    def __init__(self, config_file: Path | None = None) -> None:
         if config_file is not None:
             self.__class__.config_file = Path(config_file)
 
@@ -59,117 +89,121 @@ class WithingsConfig:
 
             # Check to make sure config matches current template
             if self.config.keys() != self.__class__._config_template.keys():
-                merged_config = deepcopy(self.__class__._config_template)
+                merged_config: ConfigDict = deepcopy(self.__class__._config_template)
                 merged_config.update(self.config)
                 self.config = merged_config
                 self.save()
 
     @property
-    def config_file(self):
+    def config_file(self) -> Path:
         return self.__class__._config_file
 
     @config_file.setter
-    def config_file(self, value: Path):
+    def config_file(self, value: Path) -> None:
         assert isinstance(value, Path)
         self.__class__.config_file = value
 
     @property
-    def config(self):
+    def config(self) -> ConfigDict:
         return self.__class__._config
 
     @config.setter
-    def config(self, value: dict):
+    def config(self, value: ConfigDict) -> None:
         assert isinstance(value, dict)
         self.__class__._config = value
 
-    def __contains__(self, item):
+    def __contains__(self, item: ConfigKeys) -> bool:
         return item in self.__class__._config
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: ConfigKeys) -> str | int | None:
         return self.__class__._config[item]
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: ConfigKeys, value: str | int | None) -> None:
         self.__class__._config[key] = value
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.config)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config_file={self.config_file})"
 
-    def get(self, item, default=None):
+    def get(self, item: ConfigKeys, default: str | int | None = None) -> str | int | datetime | None:
         if item in self.__class__._config:
             return self.__class__._config[item]
         else:
             return default
 
-    def load(self, config_file: PathLike = None):
+    def load(self, config_file: Path | None = None) -> None:
         config_file = config_file or self.config_file
         try:
             with open(config_file, "r") as f:
                 self.config = json.load(f)
         except (ValueError, FileNotFoundError):
             logger.error(f"Cannot load config file {config_file}")
-            self.config = {}
+            self.config = cast(ConfigDict, {})
 
-    def save(self):
+    def save(self) -> None:
         with open(self.config_file, "w") as f:
             json.dump(self.config, f, indent=2, sort_keys=True)
-    
-    def reset(self):
+
+    def reset(self) -> None:
         self.config = deepcopy(self.__class__._config_template)
         self.save()
 
 
 class WithingsOAuth2:
     def __init__(self, config: WithingsConfig):
-        self.config = config
+        self.config: WithingsConfig = config
 
         if self.config.get("access_token") is None or len(self.config.get("access_token", "")) == 0:
-            if self.config.get("authentification_code") is None or len(self.config.get("authentification_code", "")) == 0:
+            if (
+                self.config.get("authentification_code") is None
+                or len(self.config.get("authentification_code", "")) == 0
+            ):
                 self.config["authentification_code"] = self.get_authentication_code()
 
             self.get_access_token()
 
         self.refresh_access_token()
 
-    def get_authentication_code(self):
-        params = {
+    def get_authentication_code(self) -> str:
+        params: dict[str, str | int | None] = {
             "response_type": "code",
             "client_id": self.config["client_id"],
             "state": "OK",
             "scope": "user.metrics",
             "redirect_uri": self.config["callback_url"],
         }
+        logger.debug(params)
 
-        logger.warning("User interaction needed to get Authentification "
-                 "Code from Withings!")
-        logger.warning("Open the following URL in your web browser and copy back "
-                 "the token. You will have *30 seconds* before the "
-                 "token expires. HURRY UP!")
+        logger.warning("User interaction needed to get Authentification Code from Withings!")
+        logger.warning(
+            "Open the following URL in your web browser and copy back "
+            "the token. You will have *30 seconds* before the "
+            "token expires. HURRY UP!"
+        )
         logger.warning("(This is one-time activity)")
 
-        url = WithingsConfig.AUTHORIZE_URL + "?"
+        url = WithingsConfig.AUTHORIZE_URL + "?" + urllib.parse.urlencode(params)
 
-        for key, value in params.items():
-            url = url + key + "=" + value + "&"
+        # for key, value in params.items():
+        #     url = url + key + "=" + value + "&"
 
         logger.info(url)
-        logger.info("")
 
-        authentification_code = input("Token : ")
+        authentification_code: str = input("Token : ")
 
         return authentification_code
 
-    def _update_access_token(self, params: dict[str, str]):
-        req = requests.post(WithingsConfig.TOKEN_URL, params)
+    def _update_access_token(self, params: dict[str, str]) -> None:
+        req: requests.Response = requests.post(WithingsConfig.TOKEN_URL, params)
         resp = req.json()
 
-        status = resp.get("status")
+        status: int = resp.get("status")
         body = resp.get("body")
 
         if status != 0:
-            error_message = f"Received error code: {status}\n"
+            error_message: str = f"Received error code: {status}\n"
             error_message += "Check here for an interpretation of this error: "
             error_message += "http://developer.withings.com/api-reference#section/Response-status\n"
             error_message += "If it is regarding an invalid code, try to start the script again to obtain a new link."
@@ -181,10 +215,10 @@ class WithingsOAuth2:
         self.config["userid"] = str(body.get("userid"))
         logger.debug(f"Updated config:\n{pformat(self.config._config)}")
 
-    def get_access_token(self):
+    def get_access_token(self) -> None:
         logger.info("Get Access Token")
 
-        params = {
+        params: PartialConfigDict = {
             "action": "requesttoken",
             "grant_type": "authorization_code",
             "client_id": self.config["client_id"],
@@ -195,7 +229,7 @@ class WithingsOAuth2:
 
         self._update_access_token(params)
 
-    def refresh_access_token(self):
+    def refresh_access_token(self) -> None:
         logger.info("Refresh Access Token")
 
         params = {
@@ -210,7 +244,7 @@ class WithingsOAuth2:
 
 
 class WithingsAccount:
-    def __init__(self, withings_config: WithingsConfig):
+    def __init__(self, withings_config: WithingsConfig) -> None:
         self.height_group = None
         self.height = None
         self.height_timestamp = None
@@ -219,8 +253,9 @@ class WithingsAccount:
         self.oauth = WithingsOAuth2(withings_config)
         self.config.save()
 
-    def get_measurements(self, start_date, end_date):
+    def get_measurements(self, start_date, end_date) -> list["WithingsMeasureGroup"] | None:
         logger.info("Get Measurements")
+        logger.debug(f"Start date: {start_date}, end date: {end_date}")
 
         params = {
             "access_token": self.config["access_token"],
@@ -237,8 +272,7 @@ class WithingsAccount:
         if measurements.get("status") == 0:
             logger.debug("Measurements received")
 
-            return [WithingsMeasureGroup(g) for
-                    g in measurements.get("body").get("measuregrps")]
+            return [WithingsMeasureGroup(g) for g in measurements.get("body").get("measuregrps")]
 
     def get_height(self):
         self.height = None
@@ -277,13 +311,14 @@ class WithingsAccount:
 class WithingsMeasureGroup:
     """This class takes care of the group measurement functions"""
 
-    def __init__(self, measuregrp):
+    def __init__(self, measuregrp) -> None:
+        logger.debug(f"MeasureGroup: {measuregrp}")
         self._raw_data = measuregrp
         self.grpid = measuregrp.get("grpid")
         self.attrib = measuregrp.get("attrib")
-        self.date = measuregrp.get("date")
-        self.category = measuregrp.get("category")
-        self.measures = [WithingsMeasure(m) for m in measuregrp["measures"]]
+        self.date: int = measuregrp.get("date")
+        self.category: str = measuregrp.get("category")
+        self.measures: list[WithingsMeasure] = [WithingsMeasure(m) for m in measuregrp["measures"]]
 
     def __iter__(self):
         for measure in self.measures:
@@ -292,36 +327,36 @@ class WithingsMeasureGroup:
     def __len__(self):
         return len(self.measures)
 
-    def get_datetime(self):
+    def get_datetime(self) -> datetime:
         """convenient function to get date & time"""
         return datetime.fromtimestamp(self.date)
 
-    def get_raw_data(self):
+    def get_raw_data(self) -> list[WithingsMeasure]:
         """convenient function to get raw data"""
         return self.measures
 
-    def get_weight(self):
+    def get_weight(self) -> float | None:
         """convenient function to get weight"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_WEIGHT:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_height(self):
+    def get_height(self) -> float | None:
         """convenient function to get height"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_HEIGHT:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_fat_free_mass(self):
+    def get_fat_free_mass(self) -> float | None:
         """convenient function to get fat free mass"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_FAT_FREE_MASS:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_fat_ratio(self):
+    def get_fat_ratio(self) -> float | None:
         """convenient function to get fat ratio"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_FAT_RATIO:
@@ -335,77 +370,77 @@ class WithingsMeasureGroup:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_diastolic_blood_pressure(self):
+    def get_diastolic_blood_pressure(self) -> float | None:
         """convenient function to get diastolic blood pressure"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_DIASTOLIC_BLOOD_PRESSURE:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_systolic_blood_pressure(self):
+    def get_systolic_blood_pressure(self) -> float | None:
         """convenient function to get systolic blood pressure"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_SYSTOLIC_BLOOD_PRESSURE:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_heart_pulse(self):
+    def get_heart_pulse(self) -> float | None:
         """convenient function to get heart pulse"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_HEART_PULSE:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_temperature(self):
+    def get_temperature(self) -> float | None:
         """convenient function to get temperature"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_TEMPERATURE:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_sp02(self):
+    def get_sp02(self) -> float | None:
         """convenient function to get sp02"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_SP02:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_body_temperature(self):
+    def get_body_temperature(self) -> float | None:
         """convenient function to get body temperature"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_BODY_TEMPERATURE:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_skin_temperature(self):
+    def get_skin_temperature(self) -> float | None:
         """convenient function to get skin temperature"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_SKIN_TEMPERATURE:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_muscle_mass(self):
+    def get_muscle_mass(self) -> float | None:
         """convenient function to get muscle mass"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_MUSCLE_MASS:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_hydration(self):
+    def get_hydration(self) -> float | None:
         """convenient function to get hydration"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_HYDRATION:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_bone_mass(self):
+    def get_bone_mass(self) -> float | None:
         """convenient function to get bone mass"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_BONE_MASS:
                 return round(measure.get_value(), 2)
         return None
 
-    def get_pulse_wave_velocity(self):
+    def get_pulse_wave_velocity(self) -> float | None:
         """convenient function to get pulse wave velocity"""
         for measure in self.measures:
             if measure.type == WithingsMeasure.TYPE_PULSE_WAVE_VELOCITY:
@@ -452,7 +487,7 @@ class WithingsMeasure:
     TYPE_ELECTRODERMAL_ACTIVITY_LEFT_FOOT = 197
     TYPE_ELECTRODERMAL_ACTIVITY_RIGHT_FOOT = 198
 
-    withings_table = {
+    withings_table: dict[int, list[str]] = {
         TYPE_WEIGHT: ["Weight", "kg"],
         TYPE_HEIGHT: ["Height", "meter"],
         TYPE_FAT_FREE_MASS: ["Fat Free Mass", "kg"],
@@ -473,7 +508,10 @@ class WithingsMeasure:
         TYPE_QRS_INTERVAL: ["QRS interval duration based on ECG signal", "ms"],
         TYPE_PR_INTERVAL: ["PR interval duration based on ECG signal", "ms"],
         TYPE_QT_INTERVAL: ["QT interval duration based on ECG signal", "ms"],
-        TYPE_CORRECTED_QT_INTERVAL: ["Corrected QT interval duration based on ECG signal", "ms"],
+        TYPE_CORRECTED_QT_INTERVAL: [
+            "Corrected QT interval duration based on ECG signal",
+            "ms",
+        ],
         TYPE_ATRIAL_FIBRILLATION_PPG: ["Atrial fibrillation result from PPG", "ms"],
         TYPE_FAT_MASS_SEGMENTS: ["Fat Mass for segments in mass unit", "kg"],
         TYPE_EXTRACELLULAR_WATER: ["Extracellular Water", "kg"],
@@ -487,23 +525,32 @@ class WithingsMeasure:
         TYPE_NERVE_HEALTH_FEET: ["Nerve Health Score feet", ""],
         TYPE_ELECTRODERMAL_ACTIVITY_FEET: ["Electrodermal activity feet", ""],
         TYPE_ELECTRODERMAL_ACTIVITY_LEFT_FOOT: ["Electrodermal activity left foot", ""],
-        TYPE_ELECTRODERMAL_ACTIVITY_RIGHT_FOOT: ["Electrodermal activity right foot", ""],
+        TYPE_ELECTRODERMAL_ACTIVITY_RIGHT_FOOT: [
+            "Electrodermal activity right foot",
+            "",
+        ],
     }
 
-    def __init__(self, measure):
+    def __init__(self, measure) -> None:
+        logger.debug(f"Creating measure: {measure}")
         self._raw_data = measure
-        self.value = measure.get("value")
-        self.type = measure.get("type")
-        self.unit = measure.get("unit")
-        self.type_s = self.withings_table.get(self.type, ["unknown", ""])[0]
-        self.unit_s = self.withings_table.get(self.type, ["unknown", ""])[1]
+        self.value: float = measure.get("value")
+        self.type: str = measure.get("type")
+        self.unit: str = measure.get("unit")
+        self.type_s: str = self.withings_table.get(self.type, ["unknown", ""])[0]
+        self.unit_s: str = self.withings_table.get(self.type, ["unknown", ""])[1]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.type_s}: {self.get_value()} {self.unit_s}"
 
     def json_dict(self):
-        return {f"{self.type_s.replace(' ','_')}": {"Value": round(self.get_value(), 2), "Unit": f'{self.unit_s}'}}
+        return {
+            f"{self.type_s.replace(' ', '_')}": {
+                "Value": round(self.get_value(), 2),
+                "Unit": f"{self.unit_s}",
+            }
+        }
 
-    def get_value(self):
+    def get_value(self) -> float:
         """get value"""
         return self.value * pow(10, self.unit)
