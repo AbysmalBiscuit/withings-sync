@@ -75,7 +75,7 @@ class WithingsConfig:
 
     def __init__(self, config_file: Path | None = None) -> None:
         if config_file is not None:
-            self.__class__.config_file = Path(config_file)
+            self.__class__._config_file = Path(config_file)
 
         if not self.config_file.parent.is_dir():
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +100,7 @@ class WithingsConfig:
     @config_file.setter
     def config_file(self, value: Path) -> None:
         assert isinstance(value, Path)
-        self.__class__.config_file = value
+        self.__class__._config_file = value
 
     @property
     def config(self) -> ConfigDict:
@@ -109,7 +109,7 @@ class WithingsConfig:
     @config.setter
     def config(self, value: ConfigDict) -> None:
         assert isinstance(value, dict)
-        self.__class__._config = value
+        self.__class__._config = cast(ConfigDict, value)
 
     def __contains__(self, item: ConfigKeys) -> bool:
         return item in self.__class__._config
@@ -126,7 +126,9 @@ class WithingsConfig:
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config_file={self.config_file})"
 
-    def get(self, item: ConfigKeys, default: str | int | None = None) -> str | int | datetime | None:
+    def get[T: str | int | datetime](
+        self, item: ConfigKeys, default: T | None = None
+    ) -> T | None:
         if item in self.__class__._config:
             return self.__class__._config[item]
         return default
@@ -153,7 +155,10 @@ class WithingsOAuth2:
     def __init__(self, config: WithingsConfig) -> None:
         self.config: WithingsConfig = config
 
-        if self.config.get("access_token") is None or len(self.config.get("access_token", "")) == 0:
+        if (
+            self.config.get("access_token") is None
+            or len(self.config.get("access_token", "")) == 0
+        ):
             if (
                 self.config.get("authentification_code") is None
                 or len(self.config.get("authentification_code", "")) == 0
@@ -174,7 +179,9 @@ class WithingsOAuth2:
         }
         logger.debug(params)
 
-        logger.warning("User interaction needed to get Authentification Code from Withings!")
+        logger.warning(
+            "User interaction needed to get Authentification Code from Withings!"
+        )
         logger.warning(
             "Open the following URL in your web browser and copy back "
             "the token. You will have *30 seconds* before the "
@@ -203,7 +210,9 @@ class WithingsOAuth2:
         if status != 0:
             error_message: str = f"Received error code: {status}\n"
             error_message += "Check here for an interpretation of this error: "
-            error_message += "http://developer.withings.com/api-reference#section/Response-status\n"
+            error_message += (
+                "http://developer.withings.com/api-reference#section/Response-status\n"
+            )
             error_message += "If it is regarding an invalid code, try to start the script again to obtain a new link."
 
             logger.error(error_message)
@@ -243,15 +252,17 @@ class WithingsOAuth2:
 
 class WithingsAccount:
     def __init__(self, withings_config: WithingsConfig) -> None:
-        self.height_group = None
-        self.height = None
-        self.height_timestamp = None
+        self.height_group: WithingsMeasureGroup | None = None
+        self.height: float | None = None
+        self.height_timestamp: datetime | None = None
 
         self.config = withings_config
         self.oauth = WithingsOAuth2(withings_config)
         self.config.save()
 
-    def get_measurements(self, start_date, end_date) -> list["WithingsMeasureGroup"] | None:
+    def get_measurements(
+        self, start_date, end_date
+    ) -> list["WithingsMeasureGroup"] | None:
         logger.info("Get Measurements")
         logger.debug(f"Start date: {start_date}, end date: {end_date}")
 
@@ -270,7 +281,10 @@ class WithingsAccount:
         if measurements.get("status") == 0:
             logger.debug("Measurements received")
 
-            return [WithingsMeasureGroup(g) for g in measurements.get("body").get("measuregrps")]
+            return [
+                WithingsMeasureGroup(g)
+                for g in measurements.get("body").get("measuregrps")
+            ]
 
     def get_height(self):
         self.height = None
@@ -316,7 +330,9 @@ class WithingsMeasureGroup:
         self.attrib = measuregrp.get("attrib")
         self.date: int = measuregrp.get("date")
         self.category: str = measuregrp.get("category")
-        self.measures: list[WithingsMeasure] = [WithingsMeasure(m) for m in measuregrp["measures"]]
+        self.measures: list[WithingsMeasure] = [
+            WithingsMeasure(m) for m in measuregrp["measures"]
+        ]
 
     def __iter__(self):
         for measure in self.measures:
@@ -534,7 +550,7 @@ class WithingsMeasure:
         self._raw_data = measure
         self.value: float = measure.get("value")
         self.type: str = measure.get("type")
-        self.unit: str = measure.get("unit")
+        self.unit: int = measure.get("unit")
         self.type_s: str = self.withings_table.get(self.type, ["unknown", ""])[0]
         self.unit_s: str = self.withings_table.get(self.type, ["unknown", ""])[1]
 

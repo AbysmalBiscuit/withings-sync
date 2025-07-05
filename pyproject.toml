@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "withings-sync"
-version = "4.0.1"
+version = "4.0.2"
 description = "A tool for synchronisation of Withings (ex. Nokia Health Body) to Garmin Connect and Trainer Road."
 keywords = [
   "api",
@@ -26,7 +26,7 @@ requires-python = ">=3.12"
 dependencies = [
   'argcomplete',
   'cloudscraper',
-  'coloredlogs',
+  "coloredlogs",
   'garth',
   'lxml',
   'requests',

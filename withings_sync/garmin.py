@@ -1,20 +1,13 @@
-#!/usr/bin/env python3
 from __future__ import annotations
-from datetime import timedelta
-import urllib.request
-import urllib.error
-import urllib.parse
+
+from pathlib import Path
 
 import cloudscraper
 import garth
-import re
-import sys
-import json
-import logging
 import requests
-from pathlib import Path
+from cloudscraper import CloudScraper
 
-from .get_logger import get_logger
+from withings_sync.get_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -42,8 +35,10 @@ class GarminConnect:
         self.headers_file = self.__class__.CONFIG_DIR.joinpath("garmin_headers.txt")
 
     @staticmethod
-    def get_session(email: str | None = None, password: str | None = None):
-        session = cloudscraper.CloudScraper()
+    def get_session(
+        email: str | None = None, password: str | None = None
+    ) -> CloudScraper:
+        session: cloudscraper.CloudScraper = cloudscraper.CloudScraper()
 
         # self.print_cookies(session.cookies)
         try:
@@ -53,11 +48,13 @@ class GarminConnect:
                 f"Authentication failure: {ex}. Did you enter correct credentials?"
             )
 
-        session.headers.update({
-            "NK": "NT",
-            "authorization": garth.client.oauth2_token.__str__(),
-            "di-backend": "connectapi.garmin.com",
-        })
+        session.headers.update(
+            {
+                "NK": "NT",
+                "authorization": garth.client.oauth2_token.__str__(),
+                "di-backend": "connectapi.garmin.com",
+            }
+        )
 
         return session
 
@@ -74,7 +71,9 @@ class GarminConnect:
     def upload_file(self, f, session):
         files = {"data": ("withings.fit", f)}
 
-        res = session.post(self.UPLOAD_URL, files=files, headers={"nk": "NT"})
+        res: requests.Response = session.post(
+            self.UPLOAD_URL, files=files, headers={"nk": "NT"}
+        )
 
         try:
             resp = res.json()
@@ -84,6 +83,8 @@ class GarminConnect:
             if res.status_code == 204:  # HTTP result 204 - 'no content'
                 logger.error("No data to upload, try to use --from_date and --to_date")
             else:
-                logger.error(f"Bad response during GC upload: {res.status_code}")
+                logger.error(
+                    f"Bad response during GC upload: {res.status_code}. {res.content}"
+                )
 
         return res.status_code in [200, 201, 204]
